@@ -27,13 +27,15 @@ The `BatchFactory` is a class that generates batches of data for training. It ta
     'prompt_token_ids':  tensor, # token ids of the prompt
     'prompt_attention_mask': tensor, # attention mask of the prompt
 
-    'generations1': str, # text of the 1st generation
+    'generations1': str, # text of prompt + 1st generation
+    'generation1_response_only': str, # text of the 1st generation only
     'generations1_token_ids': tensor, # token ids of the 1st generation
     'generations1_attention_mask': tensor, # attention mask of the 1st generation
     'generation1_reward': float, # reward of the 1st generation
     'generation1_weight': float, # weight of the 1st generation
 
-    'generations2': str, # text of the 2nd generation
+    'generations2': str, # text of prompt + 2nd generation
+    'generation2_response_only': str, # text of the 2nd generation only
     'generations2_token_ids': tensor, # token ids of the 2nd generation
     'generations2_attention_mask': tensor, # attention mask of the 2nd generation
     'generation2_reward': float, # reward of the 2nd generation

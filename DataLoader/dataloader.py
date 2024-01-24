@@ -133,7 +133,7 @@ class DataLoader:
         prompt: str,
         generation: str,
         truncation_mode: str,
-        prefix: str='target'
+        generation_key: str = 'generation1',
     ) -> Dict:
         """
         Tokenize a single batch element and truncate if prompt + generation is
@@ -203,23 +203,31 @@ class DataLoader:
             skip_special_tokens=True
         ) + ' ' + self.tokenizer.eos_token
 
-        batch_element = { 'prompt_text' : prompt, f'{prefix}_text': generation }
+        batch_element = {
+            'prompt' : prompt,
+        }
 
         for k,v in self.tokenizer(prompt).items():
             batch_element[f'prompt_{k}'] = v
 
+        generation_batch_element = {
+            'generation': generation
+        }
         for k,v in self.tokenizer(generation).items():
-            batch_element[f'{prefix}_{k}'] = v
+            generation_batch_element[f'generation_{k}'] = v
 
         # combine the prompt and generation belonging to the same example
         batch_element.update(self.combine_prompt_and_generation(
-                batch_element, batch_element, prefix=prefix
+            batch_element, generation_batch_element, prefix=generation_key
         ))
   
         return batch_element
 
     def combine_prompt_and_generation(
-        self, prompt_dict: Dict, generation_dict: Dict, prefix: str='target'
+        self,
+        prompt_dict: Dict,
+        generation_dict: Dict,
+        prefix: str='generation1'
     ) -> Dict:
         """
         Tokenize the concatenated prompt and generation. 
@@ -247,18 +255,18 @@ class DataLoader:
             token labels have been set to -100.
         """
         combined_dict = {
-            f'{prefix}_combined_text' : prompt_dict['prompt_text'] + \
-                                        generation_dict[f'{prefix}_text']
+            f'{prefix}' : prompt_dict['prompt'] + generation_dict['generation'],
+            f'{prefix}_response_only': generation_dict['generation'],
         }
 
         for k,v in self.tokenizer(
-            prompt_dict['prompt_text'] + generation_dict[f'{prefix}_text']
+            prompt_dict['prompt'] + generation_dict['generation']
         ).items():
-            combined_dict[f'{prefix}_combined_{k}'] = v
+            combined_dict[f'{prefix}_{k}'] = v
 
-        combined_dict[f'{prefix}_labels'] = combined_dict[
-            f'{prefix}_combined_input_ids'
-        ][:]  # contains both input and response (unpadded)
+        combined_dict[f'{prefix}_labels'] = \
+            combined_dict[f'{prefix}_input_ids'][:] 
+            # contains both input and response (unpadded)
         combined_dict[f'{prefix}_labels'][
             :len(prompt_dict['prompt_input_ids'])
         ] = [-100] * len(prompt_dict['prompt_input_ids'])
@@ -300,7 +308,8 @@ class SFTDataLoader(DataLoader):
                         self.kwargs.get('chosen_control_token') or ''
                     ),
                     example.generations[example.sft_index],
-                    example.truncation_mode
+                    example.truncation_mode,
+                    'generation1'
                 )
                 batch.append(batch_element)
 
