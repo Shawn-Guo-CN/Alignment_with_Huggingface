@@ -293,9 +293,10 @@ def print_gpu_memory(rank: int = None, message: str = '') -> None:
             if allocated_bytes == 0:
                 continue
             print('*' * 40)
-            print(f'[{message} rank {rank} ] GPU {i}: { \
-                allocated_bytes / 1024**2:.2f \
-            } MB')
+            print(
+                f'[{message} rank {rank} ] GPU {i}: ' + \
+                f'{allocated_bytes /1024**2:.2f} MB'
+            )
         print('*' * 40)
 
 
