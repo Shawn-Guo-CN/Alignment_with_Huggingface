@@ -50,15 +50,22 @@ Note that the above items are not necessarily all included in the batch. Below i
 We hereby list the learning tasks and the corresponding batch items as well as the source of them:
 
 - **Supervised fine-tuning**: only `prompt` and `generation1` in the batch. Moreover, the `generation1_reward` is `None` and the `generation1_weight` is always 1.0.
+
 - **Reward modelling in RLHF**: `prompt`, `generation1`, and `generation2` are all included. However, the `generation1_reward` and `generation2_reward` are both `None`. The `generation1_weight` and `generation2_weight` are always 1.0.
+
+- **Reinforcement learning**: only `prompt` and `generation1` are included, and the `generation1_reward` is obtained from the online *Reward Model*.
+
 - **Offline Pointwise preference learning**: only `prompt` and `generation1` are included. The `generation1_reward` is 1.0 if the `generation1` is a desired response, otherwise 0.0 to indicate that `generation1` is undesired. The `generation1_weight` is always 1.0. (Check out [HALOs repo](https://github.com/ContextualAI/HALOs) for the details of training models with pointwise desirable/undesirable feedback.) 
-> Both the generations and annotations are from the precollected and fixed `DatasLoader`, thus this is an OFFLINE learning setup.
+  > Both the generations and annotations are from the precollected and fixed `DatasLoader`, thus this is an OFFLINE learning setup.
+
 - **Online Pointwise preference learning**: same to the above offline pointwise preference learning, except that the `generation1` is sampled from the LLM policy being training and the `generation1_reward` is obtained from the online *Annotator*. 
-> The generations are from the LLM policy being trained and the feedbacks from online annotator, thus this is an ONLINE learning setup.*
-- **Offline Pairwise preference learning**: `prompt`, `generation1`, and `generation2` are all included. The `generation1_reward` is 1.0 to indicate that `generation1` is preferred over `generation2`. The `generation1_weight` and `generation2_weight` are always 1.0.
-> Like the offline pointwise preference learning setup, the generations and annotations are from the precollected and fixed `DatasLoader`, thus this is an OFFLINE learning setup.
+  > The generations are from the LLM policy being trained and the feedbacks from online annotator, thus this is an ONLINE learning setup.*
+
+- **Offline Pairwise preference learning**: `prompt`, `generation1`, and `generation2` are all included. The `generation1_reward` is 1.0 and `generation2_reward` is 0.0 to indicate that `generation1` is preferred over `generation2`. The `generation1_weight` and `generation2_weight` are always 1.0.
+  > Like the offline pointwise preference learning setup, the generations and annotations are from the precollected and fixed `DatasLoader`, thus this is an OFFLINE learning setup.
+
 - **Online Pairwise preference learning**: same to the above offline pairwise preference learning, except that the `generation1` and `generation2` are sampled from the LLM policy being training. `generation1_reward` is 1.0 if `generation1` is preferred over `generation2` by the *online annotator*, otherwise 0.0.
-> The generations are from the LLM policy being trained and the feedbacks from online annotator, thus this is an ONLINE learning setup.*
+  > The generations are from the LLM policy being trained and the feedbacks from online annotator, thus this is an ONLINE learning setup.*
 
 ### 2. DatasLoader
 

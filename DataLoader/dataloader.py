@@ -134,6 +134,8 @@ class DataLoader:
         generation: str,
         truncation_mode: str,
         generation_key: str = 'generation1',
+        generation_reward: Optional[float] = None,
+        generation_weight: Optional[float] = 1.0,
     ) -> Dict:
         """
         Tokenize a single batch element and truncate if prompt + generation is
@@ -147,8 +149,10 @@ class DataLoader:
         - generation: output text
         - truncation_mode: one of 'keep_start'/'keep_end' 
                           (truncate end/beginning of combined text respectively)
-        - prefix: the prefix corresponding to the generation 
-                  (e.g., 'chosen', 'rejected', 'target')
+        - generation_key: the key corresponding to the generation 
+                          ('generation1' or 'generation2')
+        - generation_reward: the reward for the generation
+        - generation_weight: the weight for the generation
 
         Returns:
             A dict of the tokenized prompt, tokenized generation, and the 
@@ -220,6 +224,8 @@ class DataLoader:
         batch_element.update(self.combine_prompt_and_generation(
             batch_element, generation_batch_element, prefix=generation_key
         ))
+        batch_element[f'{generation_key}_reward'] = generation_reward
+        batch_element[f'{generation_key}_weight'] = generation_weight
   
         return batch_element
 
@@ -309,7 +315,9 @@ class SFTDataLoader(DataLoader):
                     ),
                     example.generations[example.sft_index],
                     example.truncation_mode,
-                    'generation1'
+                    generation_key='generation1',
+                    generation_reward=None,
+                    generation_weight=1.0,
                 )
                 batch.append(batch_element)
 
@@ -379,13 +387,13 @@ class PointwiseFeedbackDataLoader(DataLoader):
             for i,j in example.pairs:
                 if seen_desirable < allowed_desirable:
                     flat_data.append((
-                        example, example.generations[i], 'chosen'
+                        example, example.generations[i], 'desired'
                     ))
                     seen_desirable += 1
 
                 if seen_undesirable < allowed_undesirable:
                     flat_data.append(
-                        (example, example.generations[j], 'rejected')
+                        (example, example.generations[j], 'undesired')
                     )
                     seen_undesirable += 1
 
@@ -409,13 +417,16 @@ class PointwiseFeedbackDataLoader(DataLoader):
             example_queue = []
 
             for example, generation, status in flat_data:
+                generation_reward = 1.0 if status == 'desired' else 0.0
+                generation_weight = 1.0
                 batch_element = self.tokenize_batch_element(
                     example.prompt,
                     generation,
                     example.truncation_mode,
-                    prefix='target'
+                    generation_key='generation1',
+                    generation_reward=generation_reward,
+                    generation_weight=generation_weight,
                 )
-                batch_element['status'] = status 
                 batch_element['truncation_mode'] = example.truncation_mode
                 example_queue.append(batch_element)
 
@@ -433,10 +444,12 @@ class PointwiseFeedbackDataLoader(DataLoader):
                     indices = list(range(1, len(batch))) + [0]
                     for i in range(len(batch)):
                         batch[i].update(self.tokenize_batch_element(
-                            batch[i]['prompt_text'],
-                            batch[indices[i]]['target_text'],
+                            batch[i]['prompt'],
+                            batch[indices[i]]['generation1'],
                             batch[i]['truncation_mode'],
-                            prefix='KL'
+                            generation_key='generation2',
+                            generation_reward=0.0,
+                            generation_weight=1.0,
                         ))
 
                     example_idx += len(batch)
@@ -491,18 +504,21 @@ class PairwiseFeedbackDataLoader(DataLoader):
 
             for example, (i,j) in flat_data:
                 batch_element = {}
-                batch_element.update(
-                    self.tokenize_batch_element(
+                batch_element.update(self.tokenize_batch_element(
                         example.prompt,
                         example.generations[i],
                         example.truncation_mode,
-                        prefix='chosen'
+                        generation_key='generation1',
+                        generation_reward=1.0,
+                        generation_weight=1.0,
                 ))
                 batch_element.update(self.tokenize_batch_element(
                     example.prompt,
                     example.generations[j],
                     example.truncation_mode,
-                    prefix='rejected'
+                    generation_key='generation2',
+                    generation_reward=0.0,
+                    generation_weight=1.0,
                 ))
                 batch.append(batch_element)
 

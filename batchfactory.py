@@ -102,7 +102,55 @@ class BatchFactory:
             return False
 
 
-class SFTBatchFactory(BatchFactory):
+class OfflinePairwiseBatchFactory(BatchFactory):
+    def __init__(
+        self,
+        dataset_name: str, # e..g ['hh', 'shp']
+        tokenizer, # Huggingface tokenizer object
+        generator: Union[None, PreTrainedModel],
+        # None for offline data, otherwise a Huggingface model
+        annotator: Union[None, PreTrainedModel],
+        # None for offline data, otherwise a Huggingface model
+        split: str = 'train',
+        batch_size: int = 1,
+        max_length: int = 512,
+        max_prompt_length: int = 128,
+        n_epochs: Optional[int] = None,
+        n_examples: Optional[int] = None,
+        human_prefix: str = '\n<|user|>\n', # marks start of human's turn
+        human_suffix: str = '', # marks end of human's turn
+         # marks start of assistant's turn
+        assistant_prefix: str = '\n<|assistant|>\n',
+        assistant_suffix: str = '',   # marks end of assistant's turn
+        seed:int = 0,
+        **kwargs
+    ):
+        super().__init__(
+            dataset_name,
+            tokenizer,
+            generator,
+            annotator,
+            split,
+            batch_size,
+            max_length,
+            max_prompt_length,
+            n_epochs,
+            n_examples,
+            human_prefix,
+            human_suffix,
+            assistant_prefix,
+            assistant_suffix,
+            seed,
+            **kwargs
+        )
+        assert self.online is False, \
+            'Cannot use OfflinePairwiseBatchFactory for online data'
+
+    def __iter__(self):
+        return self.data_loader.__iter__()
+
+
+class SFTBatchFactory(OfflinePairwiseBatchFactory):
     def _get_dataloader(self):
         return DataLoader.SFTDataLoader(
             self.dataset_name,
@@ -121,55 +169,55 @@ class SFTBatchFactory(BatchFactory):
             **self.kwargs
         )
 
-    def __iter__(self):
-        return self.data_loader.__iter__()
 
-
-class OfflineBatchFactory(BatchFactory):
+class OfflinePointwiseBatchFactory(OfflinePairwiseBatchFactory):
     def _get_dataloader(self):
-        assert self.online is False, \
-            'Cannot use offline batch factory for online data'
-        if self.pairwise:
-            return DataLoader.PairwiseFeedbackDataLoader(
-                self.dataset_name,
-                self.tokenizer,
-                self.split,
-                self.batch_size,
-                self.max_length,
-                self.max_prompt_length,
-                1,
-                self.n_epochs,
-                self.n_examples,
-                human_prefix=self.human_prefix,
-                human_suffix=self.human_suffix,
-                assistant_prefix=self.assistant_prefix,
-                assistant_suffix=self.assistant_suffix,
-                **self.kwargs
-            )
-        else:
-            return DataLoader.PointwiseFeedbackDataLoader(
-                self.dataset_name,
-                self.tokenizer,
-                self.split,
-                self.batch_size,
-                self.max_length,
-                self.max_prompt_length,
-                1,
-                self.n_epochs,
-                self.n_examples,
-                human_prefix=self.human_prefix,
-                human_suffix=self.human_suffix,
-                assistant_prefix=self.assistant_prefix,
-                assistant_suffix=self.assistant_suffix,
-                **self.kwargs
-            )
+        assert self.pairwise is False, \
+            'OfflinePointwiseBatchFactory cannot be used for pairwise feedback'
+        return DataLoader.PointwiseFeedbackDataLoader(
+            self.dataset_name,
+            self.tokenizer,
+            self.split,
+            self.batch_size,
+            self.max_length,
+            self.max_prompt_length,
+            1,
+            self.n_epochs,
+            self.n_examples,
+            human_prefix=self.human_prefix,
+            human_suffix=self.human_suffix,
+            assistant_prefix=self.assistant_prefix,
+            assistant_suffix=self.assistant_suffix,
+            **self.kwargs
+        )
 
+
+class OfflinePairwiseBatchFactory(OfflinePairwiseBatchFactory):
+    def _get_dataloader(self):
+        assert self.pairwise is True, 'OfflinePairtwiseBatchFactory ' + \
+            'can only be used for pointwise feedback'
+        return DataLoader.PointwiseFeedbackDataLoader(
+            self.dataset_name,
+            self.tokenizer,
+            self.split,
+            self.batch_size,
+            self.max_length,
+            self.max_prompt_length,
+            1,
+            self.n_epochs,
+            self.n_examples,
+            human_prefix=self.human_prefix,
+            human_suffix=self.human_suffix,
+            assistant_prefix=self.assistant_prefix,
+            assistant_suffix=self.assistant_suffix,
+            **self.kwargs
+        )
 
 
 if __name__ == '__main__':
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     tokenizer.pad_token_id = tokenizer.eos_token_id
-    batch_factory = SFTBatchFactory(
+    batch_factory = OfflinePairwiseBatchFactory(
         ['hh'], tokenizer, None, None, 'test', n_examples=2
     )
     for batch in batch_factory:
