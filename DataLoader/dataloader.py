@@ -24,81 +24,13 @@ Each Example object has the following attributes:
 - the unformatted prompt (needed for alpaca)
 """
 
-import datasets
+import random
 import torch
 from torch.nn.utils.rnn import pad_sequence
-from collections import defaultdict
-import tqdm
-import re
-import random
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
-from utils import rank0_print, on_rank0, delete_dict
-import pandas as pd
-
-
-@dataclass
-class Example:
-    """
-    Class for an example in a preference or SFT dataset. 
-    If you want each prompt to be uniquely associated with an Example instance, 
-    save it in a dict.
-    """
-    prompt: str = ''                          # prompt for the generated texts
-    generations: List[str] = field(default_factory=list) # list of generations
-    sft_index: int = -1           # which response should be generated for SFT
-    scores: List[float] = field(default_factory=list)   # score of generations
-    pairs: List[Tuple[int, int]] = field(default_factory=list)  
-    # for pariwise feedback data: indices in responses,
-    # where i > j in pair (i,j) is a preference
-    desirable: List[bool] = field(default_factory=list) 
-    # for pointwise feedback data: whether the generation at the corresponding
-    # index in generations is desirable 
-    truncation_mode: str = 'keep_end'  
-    # if truncation needed, keep the beginning (keep_start) or end (keep_end) 
-    # (only override default for SHP)
-    dataset_name: str = ''
-    original_prompt: str = ''
-    # the unformatted prompt (needed to recover instruction for AlpacaEval)
-
-    def num_generations(self):
-        return len(self.generations)
-    
-    def remove_extra_spaces(self):
-        """
-        Remove double spaces in certain datasets, like Anthropic HH, to 
-        standardize spacing.
-        """
-        clean = lambda x: re.sub(r'[ \t]{2,}', ' ', x)
-        self.prompt = clean(self.prompt)
-        self.generations = list(map(clean, self.generations))
-
-
-class Dataset:
-    """
-    A collection of Example instances, indexed by prompt.
-    """
-    def __init__(self, name):
-        self.name = name
-        self.data = defaultdict(Example)
-
-    def __setitem__(self, key, value):
-        if not isinstance(key, str):
-            raise KeyError("key must be a string")
-
-        if not isinstance(value, Example):
-            raise ValueError("value must be a Example")
-
-        self.data[key] = value
-
-    def __getitem__(self, key):
-        return self.data[key]
-
-    def __len__(self):
-        return len(self.data)
-    
-    def __iter__(self):
-        return iter(self.data)
+from typing import Dict, List, Optional
+from utils import rank0_print
+from .dataset import get_hh, get_hh_harmless, get_hh_helpful
+from .dataset import get_oasst, get_shp, get_ultrabin
 
 
 class DataLoader:
@@ -118,15 +50,15 @@ class DataLoader:
         max_prompt_length: int = 128,    # max length of prompt alone
         max_prompt_count: int = None,
         n_epochs: Optional[int] = None,
-        n_examples: Optional[int] = None, # marks start of human's turn
-        human_prefix: str = '\n<|user|>\n', # marks end of human's turn
-        human_suffix: str = '', # marks start of assistant's turn
+        n_examples: Optional[int] = None, 
+        human_prefix: str = '\n<|user|>\n', # marks start of human's turn
+        human_suffix: str = '', # marks end of human's turn
+        # marks start of assistant's turn
         assistant_prefix: str = '\n<|assistant|>\n',
         assistant_suffix: str = '',   # marks end of assistant's turn
         seed:int = 0,
         **kwargs
     ) -> None:
-
         torch.manual_seed(seed)
         random.seed(seed)
 
@@ -143,11 +75,11 @@ class DataLoader:
         self.n_epochs = n_epochs
         self.epoch_idx = 0
         self.n_examples = n_examples
-        
+
         self.full_data = {}
 
         for name in dataset_names:
-            dataset = globals()[f"get_{name}"](
+            dataset = eval(f"get_{name}")(
                 split,
                 human_prefix,
                 human_suffix,
@@ -392,101 +324,6 @@ class SFTDataLoader(DataLoader):
                 break
 
 
-class ConditionalSFTDataLoader(DataLoader):
-    """
-    Dataloader for token-conditioned SFT, in the style of Korbak et al.'s 
-    (2023) "Pretraining Models with Human Feedback."
-
-    For training, each output is prepended with a control token denoting 
-    whether it's desirable or undesirable (<|good|> or <|bad|> respectively). 
-    For sampling, each input is postpended with the <good> token to ensure
-    that only desirable outputs are generated.
-    """
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        if self.kwargs.get('chosen_control_token') is None:
-            raise KeyError("control token for chosen outputs not specified")
-        
-        if self.kwargs.get('rejected_control_token') is None:
-            raise KeyError("control token for rejected outputs not specified")
-
-    def get_flat_data(self, prompts):
-        """
-        Return a flat list of examples given a list of prompts that index 
-        self.full_data. Prepend the examples with the appropriate control 
-        tokens.
-        """
-        flat_data = []
-
-        for prompt in prompts:
-            example = self.full_data[prompt]
-
-            if self.max_prompt_count:
-                example.pairs = random.sample(
-                    example.pairs,
-                    min(self.max_prompt_count, len(example.pairs))
-                )
-
-            for i,j in example.pairs:
-                flat_data.append((example, example.generations[i], 'chosen'))
-                flat_data.append((example, example.generations[j], 'rejected'))
-
-        return flat_data
-
-    def __iter__(self):
-        prompts = list(self.full_data.keys()) 
-        random.shuffle(prompts)
-        # otherwise, will be frontloaded with prompts in same domain
-        flat_data = self.get_flat_data(prompts)
-
-        epoch_idx = 0
-        example_idx = 0
-        done = False
-        
-        while True:
-            if done: break
-            random.shuffle(flat_data)
-
-            batch = []
-
-            for example, generation, status in flat_data:
-                if status == 'chosen':
-                    batch_element = self.tokenize_batch_element(
-                        example.prompt + self.kwargs["chosen_control_token"],
-                        generation,
-                        example.truncation_mode
-                    )
-                else:
-                    batch_element = self.tokenize_batch_element(
-                        example.prompt + self.kwargs["rejected_control_token"],
-                        generation,
-                        example.truncation_mode
-                    )
-
-                batch_element['status'] = status
-                batch.append(batch_element)
-
-                if len(batch) >= self.batch_size:
-                    example_idx += len(batch)
-                    yield self.collate(batch)
-                    batch = []
-
-                    if self.n_examples is not None and \
-                        example_idx >= self.n_examples:
-                        rank0_print(
-                            f'Finished generating {example_idx} examples ' + \
-                            f'on {self.split} split'
-                        )
-                        done = True
-                        break
-
-            epoch_idx += 1
-            if self.n_epochs is not None and epoch_idx >= self.n_epochs:
-                done = True
-                break
-
-
 class PointwiseFeedbackDataLoader(DataLoader):
     """
     Dataloader for losses that require only pointwise feedback (e.g., KTO).
@@ -612,7 +449,7 @@ class PointwiseFeedbackDataLoader(DataLoader):
                 break
 
 
-class PointwiseFeedbackDataLoader(DataLoader):
+class PairwiseFeedbackDataLoader(DataLoader):
     """
     Dataloader for losses that do require pairwise feedback (e.g., DPO).
     """

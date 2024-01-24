@@ -5,15 +5,80 @@ This module is largely based on the [HALOs repo](https://github.com/ContextualAI
 Each function below returns an instance of the `Dataset` class defined in 
 `dataloader.py`.
 """
+from collections import defaultdict
+from dataclasses import dataclass, field
 import datasets
 import pandas as pd
 import random
 import re
 import tqdm
-from typing import List
+from typing import List, Tuple
 
-from .dataloader import Dataset
 from utils import rank0_print, on_rank0
+
+
+@dataclass
+class Example:
+    """
+    Class for an example in a preference or SFT dataset. 
+    If you want each prompt to be uniquely associated with an Example instance, 
+    save it in a dict.
+    """
+    prompt: str = ''                          # prompt for the generated texts
+    generations: List[str] = field(default_factory=list) # list of generations
+    sft_index: int = -1           # which response should be generated for SFT
+    scores: List[float] = field(default_factory=list)   # score of generations
+    pairs: List[Tuple[int, int]] = field(default_factory=list)  
+    # for pariwise feedback data: indices in responses,
+    # where i > j in pair (i,j) is a preference
+    desirable: List[bool] = field(default_factory=list) 
+    # for pointwise feedback data: whether the generation at the corresponding
+    # index in generations is desirable 
+    truncation_mode: str = 'keep_end'  
+    # if truncation needed, keep the beginning (keep_start) or end (keep_end) 
+    # (only override default for SHP)
+    dataset_name: str = ''
+    original_prompt: str = ''
+    # the unformatted prompt (needed to recover instruction for AlpacaEval)
+
+    def num_generations(self):
+        return len(self.generations)
+    
+    def remove_extra_spaces(self):
+        """
+        Remove double spaces in certain datasets, like Anthropic HH, to 
+        standardize spacing.
+        """
+        clean = lambda x: re.sub(r'[ \t]{2,}', ' ', x)
+        self.prompt = clean(self.prompt)
+        self.generations = list(map(clean, self.generations))
+
+
+class Dataset:
+    """
+    A collection of Example instances, indexed by prompt.
+    """
+    def __init__(self, name):
+        self.name = name
+        self.data = defaultdict(Example)
+
+    def __setitem__(self, key, value):
+        if not isinstance(key, str):
+            raise KeyError("key must be a string")
+
+        if not isinstance(value, Example):
+            raise ValueError("value must be a Example")
+
+        self.data[key] = value
+
+    def __getitem__(self, key):
+        return self.data[key]
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __iter__(self):
+        return iter(self.data)
 
 
 def get_shp(
