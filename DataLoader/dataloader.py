@@ -284,6 +284,113 @@ class DataLoader:
         raise NotImplementedError
 
 
+class PromptDataLoader(DataLoader):
+    """Dataloader for prompts onlyl.
+
+    This class is called by the `OnlineBatchFactory` class, thus the generator
+    in it can generate responses to the prompts.
+    """
+
+    def tokenize_batch_element(
+        self,
+        prompt: str,
+        truncation_mode: str,
+    ) -> Dict:
+        """
+        Tokenize a single batch element and truncate if prompt + generation is
+        too long. Batch element is turned into Pytorch tensors in self.collate.
+        Create the labels for the generation, which are of length equal to the
+        sum of the length of the prompt and the generation, with -100 for the 
+        prompt tokens.
+
+        Args:
+        - prompt: the input/instruction text
+        - generation: output text
+        - truncation_mode: one of 'keep_start'/'keep_end' 
+                          (truncate end/beginning of combined text respectively)
+
+        Returns:
+            A dict of the tokenized prompt, tokenized generation, and the 
+            concatenation of the two on all relevant elements (e.g., tokens,
+            attention mask, etc.). The generation elements will have keys 
+            starting with '{prefix}_' and the concatenated elements will have
+            keys starting with '{prefix}_combined_'.
+        """
+        prompt_token_ids = self.tokenizer.encode(prompt)
+
+        # clip EOS token at end of input
+        if len(prompt_token_ids) > 0 and \
+            prompt_token_ids[-1] == self.tokenizer.eos_token_id:
+            prompt_token_ids.pop()
+
+        # if prompt is too long, truncate it
+        if len(prompt_token_ids) > self.max_prompt_length:
+            if truncation_mode == 'keep_start':
+                prompt_token_ids = prompt_token_ids[:self.max_prompt_length]
+            elif truncation_mode == 'keep_end':
+                prompt_token_ids = prompt_token_ids[-self.max_prompt_length:]
+            else:
+                raise ValueError(f'Unknown truncation mode: {truncation_mode}')
+
+        # reconstitute the prompt and generation
+        prompt = self.tokenizer.decode(
+            prompt_token_ids, skip_special_tokens=True
+        )
+
+        batch_element = {
+            'prompt' : prompt,
+        }
+
+        for k,v in self.tokenizer(prompt).items():
+            batch_element[f'prompt_{k}'] = v
+
+        return batch_element
+
+    def __iter__(self):
+        flat_data = []
+        prompts = list(self.full_data.keys())
+        random.shuffle(prompts)
+
+        for prompt in prompts:
+            flat_data.append(self.full_data[prompt])
+        
+        epoch_idx = 0
+        example_idx = 0
+        done = False
+
+        while True:
+            if done: break
+            random.shuffle(flat_data)
+
+            batch = []
+
+            for example in flat_data:
+                batch_element = self.tokenize_batch_element(
+                    example.prompt,
+                    example.truncation_mode,
+                )
+                batch.append(batch_element)
+
+                if len(batch) == self.batch_size:
+                    example_idx += len(batch)
+                    yield self.collate(batch)
+                    batch = []
+
+                    if self.n_examples is not None and \
+                        example_idx >= self.n_examples:
+                        rank0_print(
+                            f'Finished generating {self.n_examples} examples' +\
+                            f' on {self.split} split'
+                        )
+                        done = True
+                        break
+
+            epoch_idx += 1
+            if self.n_epochs is not None and epoch_idx >= self.n_epochs:
+                done = True
+                break
+
+
 class SFTDataLoader(DataLoader):
     """
     Dataloader for supervised fine-tuning.
