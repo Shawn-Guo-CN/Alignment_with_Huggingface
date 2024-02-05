@@ -120,23 +120,47 @@ class BatchFactory:
 
 
 class OfflineBatchFactory(BatchFactory):
-    """Load offline data without reweighting.
+    """BatchFactory offline data with or without reweighting.
+
+    This class is to generate offline batches for training the policy model.
+    The batches are from the `DataLoader` class. If `reweight` is True, the
+    `SampleReweighter` class is used to adjust the weights of generations in
+    a batch. Otherwise, the batches are yielded directly from the data loader.
     """
     def _check_type(self):
         assert self.online is False, \
             'Cannot use OfflineBatchFactory for online data'
-        assert self.reweight is False, \
-            'Cannot use OfflineBatchFactory for reweighting. If you want to' + \
-                ' reweight, use OfflineRWBatchFactory instead'
+        self._offline_check_type()
 
     def __iter__(self):
-        return self.data_loader.__iter__()
+        if self.reweight:
+            batch = next(self.data_loader.__iter__())
+            batch = self.reweighter(batch)
+            return batch
+        else:
+            return self.data_loader.__iter__()
 
     def _offline_check_type(self):
         raise NotImplementedError
 
 
 class SFTBatchFactory(OfflineBatchFactory):
+    """BatchFactory for SFT data.
+
+    Each batch is a dictionary of the following format:
+    {
+        'prompt': str, # prompt for the generated texts
+        'prompt_token_ids':  tensor, # token ids of the prompt
+        'prompt_attention_mask': tensor, # attention mask of the prompt
+
+        'generations1': str, # text of prompt + 1st generation
+        'generation1_response_only': str, # text of the 1st generation only
+        'generations1_token_ids': tensor, # token ids of the 1st generation
+        'generations1_attention_mask': tensor, # attn mask of the 1st generation
+        'generation1_reward': float, # reward of the 1st generation
+        'generation1_weight': float, # weight of the 1st generation
+    }
+    """
     def _get_dataloader(self):
         return DataLoader.SFTDataLoader(
             self.dataset_name,
@@ -155,8 +179,28 @@ class SFTBatchFactory(OfflineBatchFactory):
             **self.kwargs
         )
 
+    def _offline_check_type(self):
+        assert self.reweight is False, \
+            'SFTBatchFactory should not be used with reweighting.'
+
 
 class OfflinePointwiseBatchFactory(OfflineBatchFactory):
+    """BatchFactory for offline data with pointwise feedback.
+
+    Each batch is a dictionary of the following format:
+    {
+        'prompt': str, # prompt for the generated texts
+        'prompt_token_ids':  tensor, # token ids of the prompt
+        'prompt_attention_mask': tensor, # attention mask of the prompt
+
+        'generations1': str, # text of prompt + 1st generation
+        'generation1_response_only': str, # text of the 1st generation only
+        'generations1_token_ids': tensor, # token ids of the 1st generation
+        'generations1_attention_mask': tensor, # attn mask of the 1st generation
+        'generation1_reward': float, # reward of the 1st generation
+        'generation1_weight': float, # weight of the 1st generation
+    }
+    """
     def _get_dataloader(self):
         return DataLoader.PointwiseFeedbackDataLoader(
             self.dataset_name,
@@ -181,78 +225,28 @@ class OfflinePointwiseBatchFactory(OfflineBatchFactory):
 
 
 class OfflinePairwiseBatchFactory(OfflineBatchFactory):
-    def _get_dataloader(self):
-        return DataLoader.PointwiseFeedbackDataLoader(
-            self.dataset_name,
-            self.tokenizer,
-            self.split,
-            self.batch_size,
-            self.max_length,
-            self.max_prompt_length,
-            self.batch_size,
-            self.n_epochs,
-            self.n_examples,
-            human_prefix=self.human_prefix,
-            human_suffix=self.human_suffix,
-            assistant_prefix=self.assistant_prefix,
-            assistant_suffix=self.assistant_suffix,
-            **self.kwargs
-        )
+    """BatchFactory for offline data with pointwise feedback.
 
-    def _offline_check_type(self):
-        assert self.pairwise is True, \
-            'OfflinePairwiseBatchFactory must be used for pairwise feedback'
+    Each batch is a dictionary of the following format:
+    {
+        'prompt': str, # prompt for the generated texts
+        'prompt_token_ids':  tensor, # token ids of the prompt
+        'prompt_attention_mask': tensor, # attention mask of the prompt
 
+        'generation1': str, # text of prompt + 1st generation
+        'generation1_response_only': str, # text of the 1st generation only
+        'generation1_token_ids': tensor, # token ids of the 1st generation
+        'generation1_attention_mask': tensor, # attn mask of the 1st generation
+        'generation1_reward': float, # reward of the 1st generation
+        'generation1_weight': float, # weight of the 1st generation
 
-class OfflineRWBatchFactory(BatchFactory):
-    """Load offline data with reweighting.
-    """
-    def _check_type(self):
-        assert self.online is False, \
-            'Cannot use OfflineBatchFactory for online data'
-        assert self.reweight is True, \
-            'Cannot use OfflineRWBatchFactory without reweighting. ' + \
-                'If you don\'t want to reweight, use OfflineBatchFactory.'
-
-    def __iter__(self):
-        batch = next(self.data_loader.__iter__())
-        # TODO: the reweighter below is a placeholder. Replace with the
-        # actual instance of `SampleReweighter` in the future.
-        batch = self.reweighter(batch)
-        return batch
-
-    def _offline_check_type(self):
-        raise NotImplementedError
-
-
-class OfflinePointwiseRWBatchFactory(OfflineRWBatchFactory):
-    """Load offline pointwise data with reweighting.
-    """
-    def _get_dataloader(self):
-        return DataLoader.PointwiseFeedbackDataLoader(
-            self.dataset_name,
-            self.tokenizer,
-            self.split,
-            self.batch_size,
-            self.max_length,
-            self.max_prompt_length,
-            self.batch_size,
-            self.n_epochs,
-            self.n_examples,
-            human_prefix=self.human_prefix,
-            human_suffix=self.human_suffix,
-            assistant_prefix=self.assistant_prefix,
-            assistant_suffix=self.assistant_suffix,
-            **self.kwargs
-        )
-
-    def _offline_check_type(self):
-        assert self.pairwise is False, 'OfflinePointwiseRWBatchFactory' + \
-            'cannot be used for pairwise feedback'
-
-
-class OfflinePairwiseRWBatchFactory(OfflineRWBatchFactory):
-    """Load offline pairwise data with reweighting.
+        'generation2': str, # text of prompt + 2nd generation
+        'generation2_response_only': str, # text of the 2nd generation only
+        'generation2_token_ids': tensor, # token ids of the 2nd generation
+        'generation2_attention_mask': tensor, # attn mask of the 2nd generation
+        'generation2_reward': float, # reward of the 2nd generation
+        'generation2_weight': float, # weight of the 2nd generation
+    }
     """
     def _get_dataloader(self):
         return DataLoader.PointwiseFeedbackDataLoader(
@@ -278,9 +272,18 @@ class OfflinePairwiseRWBatchFactory(OfflineRWBatchFactory):
 
 
 class OnlineBatchFactory(BatchFactory):
+    """BatchFactor with online annotator and generator.
+
+    This class is to generate online batches fro training the policy model.
+    The data loader used in this class is `PromptDataLoader` which yields
+    only the prompts in the dataset. The responses are generated by the
+    generator on the fly. The responses are then annotated by the annotator
+    before being returned as a batch.
+    """
     def _check_type(self):
-       assert self.online is True, \
+        assert self.online is True, \
             'Cannot use OfflinePairwiseBatchFactory for online data'
+        self._online_check_type()
 
     def _get_dataloader(self):
         return DataLoader.PromptDataLoader(
@@ -300,13 +303,30 @@ class OnlineBatchFactory(BatchFactory):
             **self.kwargs
         )
 
+    def _get_batch(self):
+        raise NotImplementedError
+
+    def _get_sample_from_genearator(self):
+        raise NotImplementedError
+
+    def __iter__(self):
+        if self.reweight:
+            batch = self._get_batch()
+            batch = self.reweighter(batch)
+            return batch
+        else:
+            return self._get_batch()
+
+    def _online_check_type(self):
+        raise NotImplementedError
+
 
 class OnlinePointwiseBatchFactory(OnlineBatchFactory):
-    def __init__(self):
+    def _online_check_type(self):
         raise NotImplementedError
 
 
 class OnlinePairwiseBatchFactory(OnlineBatchFactory):
-    def __init__(self):
+    def _online_check_type(self):
         raise NotImplementedError
 
