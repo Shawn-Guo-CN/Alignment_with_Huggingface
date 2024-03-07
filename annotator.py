@@ -22,6 +22,27 @@ Eatch batch is a dictionary of the following format:
     'generation2_weight': float, # weight of the 2nd generation
 }
 """
+from typing import List, Dict, Any
+
+
 class Annotator:
+    def __init__(self) -> None:
+        raise NotImplementedError
+
+
+class TensorAnnotator(Annotator):
+    # inputs are PyTorch tensors
+    def __init__(self) -> None:
+        raise NotImplementedError
+
+
+class RewardAnnotator(TensorAnnotator):
+    # use a reward model to annotate a given PyTorch tensor
+    def __init__(self) -> None:
+        raise NotImplementedError
+
+
+class TextAnnotator(Annotator):
+    # inputs are strings
     def __init__(self) -> None:
         raise NotImplementedError
