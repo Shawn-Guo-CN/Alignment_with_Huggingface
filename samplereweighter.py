@@ -26,3 +26,9 @@ Eatch batch is a dictionary of the following format:
 class SampleReweighter(object):
     def __init__(self) -> None:
         raise NotImplementedError
+
+
+class TensorAnnotator(SampleReweighter):
+    # inputs are PyTorch tensors
+    def __init__(self) -> None:
+        raise NotImplementedError
