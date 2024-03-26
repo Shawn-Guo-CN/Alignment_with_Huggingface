@@ -24,10 +24,11 @@ Each batch is a dictionary of the following format:
 import random
 import torch
 from transformers import PreTrainedModel, AutoTokenizer
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 import DataLoader
 from samplereweighter import SampleReweighter
+from annotator import Annotator
 
 
 class BatchFactory:
@@ -37,7 +38,7 @@ class BatchFactory:
         tokenizer, # Huggingface tokenizer object
         generator: Union[None, PreTrainedModel] = None,
         # None for offline data, otherwise a Huggingface model
-        annotator: Union[None, PreTrainedModel] = None,
+        annotator: Union[None, Annotator] = None,
         # None for offline data, otherwise a Huggingface model
         reweighter: Union[None, SampleReweighter] = None,
         # None for on reweighting, otherwise a SampleReweighter object
@@ -53,6 +54,7 @@ class BatchFactory:
         assistant_prefix: str = '\n<|assistant|>\n',
         assistant_suffix: str = '',   # marks end of assistant's turn
         seed:int = 0,
+        device: str = 'cpu', # device for the generator 
         **kwargs
     ) -> None:
         torch.manual_seed(seed)
@@ -85,6 +87,8 @@ class BatchFactory:
         self.reweight = self._get_reweight_flag()
         self._check_type()
         self.data_loader = self._get_dataloader()
+
+        self.device = device
 
     def _check_type(self):
         raise NotImplementedError
@@ -306,8 +310,46 @@ class OnlineBatchFactory(BatchFactory):
     def _get_batch(self):
         raise NotImplementedError
 
-    def _get_sample_from_genearator(self):
-        raise NotImplementedError
+    @torch.no_grad() # no need to compute gradients for on-policy sampling
+    def _get_sample_from_generator(
+        self,
+        prompt_batch: Dict[str, torch.Tensor],
+        id: int = 1,
+    ):
+        """Generate responses for the given prompt batch.
+
+        Args:
+            prompt_batch: a batch of prompts of the following format:
+            {
+                'prompt': str, # prompt for the generated texts
+                'prompt_token_ids':  tensor, # token ids of the prompt
+                'prompt_attention_mask': tensor, # attention mask of the prompt
+            }
+
+        Returns:
+            A batch of responses of the following format:
+            {
+                'generations{id}': str, # text of the generation
+                'generations{id}_token_ids': tensor, token ids of the generation
+                'generations{id}_attention_mask': tensor, 
+                # attention mask of the 1st generation
+            }
+        """
+        assert self.tokenizer.padding_side == 'left', \
+            'Only left padding is supported for sampling a batch from generator'
+        outputs = self.generator.generate(
+            input_ids=prompt_batch['prompt_input_ids'].to('cuda'),
+            attention_mask=prompt_batch['prompt_attention_mask'].to('cuda'),
+            max_new_tokens=self.max_length - self.max_prompt_length,
+            return_dict_in_generate=True,
+            eos_token_id = self.tokenizer.eos_token_id,
+            pad_token_id = self.tokenizer.pad_token_id,
+        )
+        token_ids = outputs.sequences
+        # TODO: the following mask needs to be checked and updated
+        attention_mask = (token_ids != self.tokenizer.pad_token_id).long()
+
+        return token_ids, attention_mask
 
     def __iter__(self):
         if self.reweight:
