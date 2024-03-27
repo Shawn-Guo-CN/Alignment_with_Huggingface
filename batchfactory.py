@@ -351,6 +351,13 @@ class OnlineBatchFactory(BatchFactory):
 
         return token_ids, attention_mask
 
+    def _get_feedback_from_annotator(
+        self,
+        generations_token_ids: torch.Tensor,
+        generations_attention_mask: torch.Tensor,
+    ):
+        raise NotImplementedError
+
     def __iter__(self):
         if self.reweight:
             batch = self._get_batch()
@@ -360,15 +367,32 @@ class OnlineBatchFactory(BatchFactory):
             return self._get_batch()
 
     def _online_check_type(self):
-        raise NotImplementedError
+        assert self.annotator is not None, \
+            'OnlineBatchFactory must have an annotator'
+        assert self.generator is not None, \
+            'OnlineBatchFactory must have a generator'
 
 
 class OnlinePointwiseBatchFactory(OnlineBatchFactory):
+    def _get_batch(self):
+        prompt_batch = next(self.data_loader.__iter__())
+        generations1_token_ids, generations1_attention_mask = \
+            self._get_sample_from_generator(prompt_batch, id=1)
+        return self.annotator.annotate(
+            prompt_batch,
+            generations1_token_ids,
+            generations1_attention_mask,
+            id=1,
+        )
+
     def _online_check_type(self):
-        raise NotImplementedError
+        self.super()._online_check_type()
+        assert self.pairwise is False, \
+            'OnlinePointwiseBatchFactory cannot be used for pairwise feedback'
 
 
 class OnlinePairwiseBatchFactory(OnlineBatchFactory):
     def _online_check_type(self):
-        raise NotImplementedError
-
+        self.super()._online_check_type()
+        assert self.pairwise is True, \
+            'OnlinePairwiseBatchFactory must be used for pairwise feedback'
